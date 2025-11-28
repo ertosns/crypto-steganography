@@ -6,7 +6,7 @@ Steganography tool for hiding messages in images of multiple formats. Written in
 
 - Encode secret text messages into images
 - Encode any file (images, documents, archives, etc.) into images
-- Optional GPG encryption for enhanced security
+- Optional GPG public key encryption - only the private key holder can decrypt
 - Decode hidden messages and files from images
 - Check storage capacity of any image
 - Calculate minimum image size needed for a secret
@@ -70,11 +70,13 @@ Extract a hidden text message from an image:
 cargo run -- decode -i output.png
 ```
 
-With GPG decryption:
+With GPG encryption:
 
 ```bash
 cargo run -- decode -i output.png -k private.asc -p "passphrase"
 ```
+
+Note: You must provide the private key corresponding to the public key used during encoding.
 
 ### Decode a hidden file
 
@@ -89,6 +91,8 @@ With GPG decryption:
 ```bash
 cargo run -- decode-file -i output.png -o extracted.pdf -k private.asc -p "passphrase"
 ```
+
+Note: The private key must match the public key used during encoding.
 
 ### Check image capacity
 
@@ -149,10 +153,12 @@ The tool uses LSB steganography to hide data:
 
 1. **Text Encoding**: The message is converted to binary and embedded into the least significant bits of the image's RGB channels
 2. **File Encoding**: Any file is read as binary data and embedded into the carrier image's LSBs with a length prefix
-3. **Decoding**: The least significant bits are extracted and converted back to text or binary file data
-4. **Validation**: Before encoding, the tool validates that the carrier image has enough capacity
-5. **Statistics**: After encoding, detailed statistics show capacity, usage, and remaining space
-6. Markers and length prefixes ensure data can be reliably extracted
+3. **GPG Encryption**: When a GPG public key is provided, the data is encrypted with the recipient's public key before embedding. Only the holder of the corresponding private key can decrypt the hidden data
+4. **Decoding**: The least significant bits are extracted and converted back to text or binary file data
+5. **GPG Decryption**: If the data was encrypted, the private key and passphrase must be provided to decrypt it
+6. **Validation**: Before encoding, the tool validates that the carrier image has enough capacity
+7. **Statistics**: After encoding, detailed statistics show capacity, usage, and remaining space
+8. Markers and length prefixes ensure data can be reliably extracted
 
 ## Requirements
 
