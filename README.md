@@ -5,9 +5,9 @@ Steganography tool for hiding messages in images of multiple formats. Written in
 ## Features
 
 - Encode secret text messages into images
-- Encode any file (images, documents, archives, etc.) into images
+- Encode any number of files and/or whole directories into a single image, preserving file names and directory structure
 - Optional GPG public key encryption - only the private key holder can decrypt
-- Decode hidden messages and files from images
+- Decode hidden messages and files from images, recreating the original files
 - Check storage capacity of any image
 - Calculate minimum image size needed for a secret
 - Detailed statistics on space usage and availability
@@ -47,19 +47,32 @@ You can use any format for input, but output must be PNG:
 cargo run -- encode -i photo.jpg -o encoded.png -m "Your secret message"
 ```
 
-### Encode a file into an image
+### Encode files or directories into an image
 
-Hide any file inside a carrier image:
+Hide one or more files inside a carrier image. Binary files are fine; the
+original file names are kept so extraction recreates them:
 
 ```bash
 cargo run -- encode-file -i carrier.png -o output.png -s secret.pdf
-cargo run -- encode-file -i carrier.png -o output.png -s document.zip
+cargo run -- encode-file -i carrier.png -o output.png -s secret.pdf -s photo.jpg -s notes.txt
 ```
+
+Hide a whole directory as it is (nested folders, empty folders and symlinks are
+kept). Files and directories can be mixed in one command:
+
+```bash
+cargo run -- encode-file -i carrier.png -o output.png -s my_project/
+cargo run -- encode-file -i carrier.png -o output.png -s report.pdf -s photos/
+```
+
+All secrets are bundled into a gzip-compressed tar archive before embedding, so
+you don't need to zip them yourself. Each path is stored under its base name, so
+two secrets with the same base name (e.g. `a/f.txt` and `b/f.txt`) are rejected.
 
 With GPG encryption:
 
 ```bash
-cargo run -- encode-file -i carrier.png -o output.png -s photo.jpg -k public.asc
+cargo run -- encode-file -i carrier.png -o output.png -s photo.jpg -s docs/ -k public.asc
 ```
 
 ### Decode a text message
@@ -78,21 +91,27 @@ cargo run -- decode -i output.png -k private.asc -p "passphrase"
 
 Note: You must provide the private key corresponding to the public key used during encoding.
 
-### Decode a hidden file
+### Decode hidden files
 
-Extract a hidden file from a carrier image:
+Extract the hidden files into a directory (created if missing; defaults to the
+current directory). Original names and directory structure are restored:
 
 ```bash
-cargo run -- decode-file -i output.png -o extracted.pdf
+cargo run -- decode-file -i output.png -o extracted/
 ```
 
 With GPG decryption:
 
 ```bash
-cargo run -- decode-file -i output.png -o extracted.pdf -k private.asc -p "passphrase"
+cargo run -- decode-file -i output.png -o extracted/ -k private.asc -p "passphrase"
 ```
 
-Note: The private key must match the public key used during encoding.
+Note: The private key must match the public key used during encoding. If the
+hidden data is encrypted and no key is given, the tool tells you so instead of
+failing with a parse error.
+
+Images created by older versions of this tool (single file, no name stored)
+are still supported; their content is written to `<output-dir>/hidden.bin`.
 
 ### Check image capacity
 
@@ -104,10 +123,11 @@ cargo run -- capacity -i image.png
 
 ### Calculate required size
 
-Find out what size image you need to hide a specific file:
+Find out what size image you need to hide a set of files or directories:
 
 ```bash
 cargo run -- required -s secret.jpg
+cargo run -- required -s report.pdf -s photos/
 ```
 
 ## Options
@@ -123,7 +143,7 @@ cargo run -- required -s secret.jpg
 
 - `-i, --input <PATH>` - Path to the carrier image
 - `-o, --output <PATH>` - Path to save the output image (must be PNG)
-- `-s, --secret <PATH>` - Path to the secret file to hide
+- `-s, --secret <PATH>...` - Secret files and/or directories to hide (repeatable: `-s a -s b` or `-s a b dir/`)
 - `-k, --gpg-key <PATH>` - GPG public key file for encryption (optional)
 
 ### Decode Command (Text)
@@ -134,8 +154,8 @@ cargo run -- required -s secret.jpg
 
 ### Decode-File Command
 
-- `-i, --input <PATH>` - Path to the image containing the hidden file
-- `-o, --output <PATH>` - Path to save the extracted secret file
+- `-i, --input <PATH>` - Path to the image containing the hidden files
+- `-o, --output <DIR>` - Directory to extract the hidden files into (default: `.`)
 - `-k, --gpg-key <PATH>` - GPG private key file for decryption (optional)
 - `-p, --passphrase <TEXT>` - GPG key passphrase (optional)
 
@@ -145,16 +165,16 @@ cargo run -- required -s secret.jpg
 
 ### Required Command
 
-- `-s, --secret <PATH>` - Path to the secret file to analyze
+- `-s, --secret <PATH>...` - Secret files and/or directories to analyze (repeatable)
 
 ## How it works
 
 The tool uses LSB steganography to hide data:
 
 1. **Text Encoding**: The message is converted to binary and embedded into the least significant bits of the image's RGB channels
-2. **File Encoding**: Any file is read as binary data and embedded into the carrier image's LSBs with a length prefix
+2. **File Encoding**: The given files and directories are bundled into a gzip-compressed tar archive (preserving names, structure and permissions), which is embedded into the carrier image's LSBs with a marker, a flags byte (records whether the payload is encrypted) and a length prefix
 3. **GPG Encryption**: When a GPG public key is provided, the data is encrypted with the recipient's public key before embedding. Only the holder of the corresponding private key can decrypt the hidden data
-4. **Decoding**: The least significant bits are extracted and converted back to text or binary file data
+4. **Decoding**: The least significant bits are extracted and converted back to text, or unpacked from the archive into the output directory with the original file names
 5. **GPG Decryption**: If the data was encrypted, the private key and passphrase must be provided to decrypt it
 6. **Validation**: Before encoding, the tool validates that the carrier image has enough capacity
 7. **Statistics**: After encoding, detailed statistics show capacity, usage, and remaining space

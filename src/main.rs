@@ -1,9 +1,11 @@
+mod archive;
 mod encoder;
 mod decoder;
 mod crypto;
 
 use clap::{Parser, Subcommand};
 use anyhow::Result;
+use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(name = "steganography")]
@@ -42,28 +44,32 @@ enum Commands {
         passphrase: Option<String>,
     },
     
-    #[command(about = "Encode any file into an image")]
+    #[command(about = "Encode one or more files and/or directories into an image")]
     EncodeFile {
         #[arg(short, long, help = "Carrier image path")]
         input: String,
         
-        #[arg(short, long, help = "Output image path")]
+        #[arg(short, long, help = "Output image path (PNG)")]
         output: String,
         
-        #[arg(short, long, help = "Secret file to hide")]
-        secret: String,
+        // This subcommand has no positional arguments, so `num_args = 1..` is
+        // safe: `-s a b dir/` and `-s a -s b -s dir/` both work. If a positional
+        // is ever added here, drop `num_args` and rely on repeated `-s`.
+        #[arg(short, long, required = true, num_args = 1.., value_name = "PATH",
+              help = "Secret files and/or directories to hide (repeatable); names are preserved")]
+        secret: Vec<PathBuf>,
         
         #[arg(short = 'k', long, help = "GPG public key file for encryption (optional)")]
         gpg_key: Option<String>,
     },
     
-    #[command(about = "Decode a hidden file from an image")]
+    #[command(about = "Extract hidden files from an image into a directory")]
     DecodeFile {
         #[arg(short, long, help = "Input image path")]
         input: String,
         
-        #[arg(short, long, help = "Output path for extracted image")]
-        output: String,
+        #[arg(short, long, default_value = ".", help = "Directory to extract hidden files into (created if missing)")]
+        output: PathBuf,
         
         #[arg(short = 'k', long, help = "GPG private key file for decryption (optional)")]
         gpg_key: Option<String>,
@@ -78,11 +84,20 @@ enum Commands {
         input: String,
     },
     
-    #[command(about = "Calculate minimum image size needed to hide a secret")]
+    #[command(about = "Calculate minimum image size needed to hide the given secrets")]
     Required {
-        #[arg(short, long, help = "Secret file path (text file or image)")]
-        secret: String,
+        #[arg(short, long, required = true, num_args = 1.., value_name = "PATH",
+              help = "Secret files and/or directories to analyze (repeatable)")]
+        secret: Vec<PathBuf>,
     },
+}
+
+fn print_stats(stats: &encoder::EncodingStats) {
+    println!("\nStatistics:");
+    println!("  Available capacity: {} bytes", stats.capacity);
+    println!("  Secret size: {} bytes", stats.secret_size);
+    println!("  Remaining space: {} bytes", stats.remaining);
+    println!("  Usage: {:.2}%", stats.usage_percent());
 }
 
 fn main() -> Result<()> {
@@ -95,31 +110,26 @@ fn main() -> Result<()> {
             if gpg_key.is_some() {
                 println!("Message was encrypted with GPG");
             }
-            println!("\nStatistics:");
-            println!("  Available capacity: {} bytes", stats.capacity);
-            println!("  Secret size: {} bytes", stats.secret_size);
-            println!("  Remaining space: {} bytes", stats.remaining);
-            println!("  Usage: {:.2}%", stats.usage_percent());
+            print_stats(&stats);
         }
         Commands::Decode { input, gpg_key, passphrase } => {
             let message = decoder::decode_text(&input, gpg_key.as_deref(), passphrase.as_deref())?;
             println!("Decoded message: {}", message);
         }
         Commands::EncodeFile { input, output, secret, gpg_key } => {
-            let stats = encoder::encode_file(&input, &output, &secret, gpg_key.as_deref())?;
-            println!("File successfully encoded into {}", output);
+            let stats = encoder::encode_files(&input, &output, &secret, gpg_key.as_deref())?;
+            println!("{} path(s) successfully encoded into {}", secret.len(), output);
             if gpg_key.is_some() {
-                println!("File was encrypted with GPG");
+                println!("Files were encrypted with GPG");
             }
-            println!("\nStatistics:");
-            println!("  Available capacity: {} bytes", stats.capacity);
-            println!("  Secret size: {} bytes", stats.secret_size);
-            println!("  Remaining space: {} bytes", stats.remaining);
-            println!("  Usage: {:.2}%", stats.usage_percent());
+            print_stats(&stats);
         }
         Commands::DecodeFile { input, output, gpg_key, passphrase } => {
-            decoder::decode_file(&input, &output, gpg_key.as_deref(), passphrase.as_deref())?;
-            println!("Hidden file successfully extracted to {}", output);
+            let entries = decoder::decode_file(&input, &output, gpg_key.as_deref(), passphrase.as_deref())?;
+            println!("Extracted {} entries into {}:", entries.len(), output.display());
+            for entry in &entries {
+                println!("  {}", output.join(entry).display());
+            }
         }
         Commands::Capacity { input } => {
             let capacity = encoder::get_capacity(&input)?;
@@ -128,7 +138,7 @@ fn main() -> Result<()> {
         }
         Commands::Required { secret } => {
             let required = encoder::calculate_required_size(&secret)?;
-            println!("Secret file analysis:");
+            println!("Secret analysis ({} path(s), bundled as tar.gz):", secret.len());
             println!("  Secret size: {}", required.format_bytes(required.secret_size));
             println!();
             println!("Minimum carrier image requirements:");
